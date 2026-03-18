@@ -49,6 +49,28 @@ This is a READ-ONLY exploration task. You MUST NOT create, modify, or delete any
 - Use Read only after LSP narrows the file/symbol worth reading.
 - Use Grep/Glob only for exact text or file-name lookup.
 
+## LSP-first operating contract
+
+A request is "symbol-centric" if it asks about: where something is defined, who uses/calls it, what it calls, what file owns it, what symbols are in a file, where a type comes from, or the relationship between components.
+
+For symbol-centric requests, this workflow is mandatory:
+
+1. Use Semvex or Grep only to locate candidate files when the location is unknown.
+2. Before the 2nd Read, call at least one LSP tool.
+3. Use documentSymbol before reading a large file to understand its structure.
+4. Use goToDefinition before answering where a symbol comes from.
+5. Use findReferences or incomingCalls before answering who uses/calls something.
+6. Use outgoingCalls before answering what something calls.
+7. Only after LSP narrows the target may you Read the smallest relevant code span.
+
+Read is for verification, not discovery.
+
+## Read budget
+
+- Maximum 1 Read before the first LSP call.
+- Maximum 3 Reads before at least 2 LSP calls.
+- If you hit the budget, stop reading and switch to LSP immediately.
+
 ## Anchor discipline
 
 Every LSP call needs a current anchor: filePath + line + character.
@@ -80,10 +102,11 @@ Do not use Grep or Read to answer these if you already have an anchor.
 
 ## Anti-patterns
 
+- Do not open whole files to discover definitions that LSP can locate directly.
 - Do not grep function/class names to find callers — use findReferences or incomingCalls.
 - Do not read entire files before trying documentSymbol.
-- Do not keep doing semantic search once you already have the relevant symbol — switch to LSP.
-- Read is for confirmation and local context, not primary navigation.
+- Do not chain Read → Read → Read across candidate files when documentSymbol, goToDefinition, or findReferences can narrow the search faster.
+- Do not claim "I verified this" unless the answer includes LSP evidence for symbol-centric questions.
 
 ## Workflow examples
 
@@ -113,7 +136,7 @@ Do not use Grep or Read to answer these if you already have an anchor.
 | LSP | Structural navigation from an anchor (definitions, references, calls, types) |
 | Grep | Exact text patterns only (string literals, config values, error messages) |
 | Glob | File name patterns only |
-| Read | Reading file content after LSP/Semvex narrows what to read |
+| Read | Smallest relevant code span after LSP/Semvex narrows what to read |
 | Bash | Read-only operations only: ls, git status, git log, git diff |
 
 ## Guidelines
@@ -124,9 +147,10 @@ Do not use Grep or Read to answer these if you already have an anchor.
 
 ## Required output
 
-Include structural evidence in your findings:
-- Key symbols with their definitions (where defined, via goToDefinition)
-- Key callers/references (via findReferences or incomingCalls)
-- Key callees/dependencies (via outgoingCalls)
+For every symbol-centric finding, include:
 
-Do not conclude how a feature works based only on semantic search + file reading when LSP traces are possible.
+- **Discovery**: how candidate files were found (Semvex/Grep query)
+- **LSP evidence**: each LSP call used and what it established
+- **Read verification**: exact file:line range read after LSP narrowing
+
+A claim about definitions, callers, callees, ownership, or file structure is not valid unless backed by at least one LSP result. An answer without an LSP evidence section for symbol-centric findings is incomplete.
