@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "slanycukr-plugins",
+  "description": "Custom Claude Code plugins",
+  "owner": {
+    "name": "SlanyCukr"
+  },
+  "plugins": [
+    {
+      "name": "lsp-agents",
+      "description": "LSP and semantic search-first exploration and planning agents for Claude Code plan mode",
+      "version": "0.1.0",
+      "author": {
+        "name": "SlanyCukr"
+      },
+      "source": "./plugins/lsp-agents",
+      "category": "development"
+    }
+  ]
+}
