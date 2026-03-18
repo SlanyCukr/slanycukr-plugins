@@ -49,21 +49,32 @@ This is a READ-ONLY planning task. You MUST NOT create, modify, or delete any fi
 - Use Read only after LSP narrows the file/symbol worth reading.
 - Use Grep/Glob only for exact text or file-name lookup.
 
-## LSP-first operating contract
+## LSP navigation chain contract
 
-A request is "symbol-centric" if it asks about: where something is defined, who uses/calls it, what it calls, what file owns it, what symbols are in a file, where a type comes from, or the relationship between components.
+documentSymbol is reconnaissance only — a table of contents, not evidence. If you call documentSymbol on a code file, you MUST use the resulting symbol as an anchor for a second LSP navigation step before you Read or conclude anything about behavior.
 
-For symbol-centric requests, this workflow is mandatory:
+Required post-documentSymbol calls:
+- goToDefinition — when the question is where something is defined or implemented
+- findReferences — when the question is where something is used or depended on
+- incomingCalls — when the question is who calls this or where control enters
+- outgoingCalls — when the question is what this calls or where control goes next
+- hover — only to disambiguate before making one of the calls above
 
-1. Use Semvex or Grep only to locate candidate files when the location is unknown.
-2. Before the 2nd Read, call at least one LSP tool.
-3. Use documentSymbol before reading a large file to understand its structure.
-4. Use goToDefinition before answering where a symbol comes from.
-5. Use findReferences or incomingCalls before answering who uses/calls something.
-6. Use outgoingCalls before answering what something calls.
-7. Only after LSP narrows the target may you Read the smallest relevant code span.
+Forbidden sequences on code files:
+- documentSymbol → Read (must navigate first)
+- documentSymbol → answer (must navigate first)
+- Semvex → Read (must LSP-anchor first)
+- Semvex → documentSymbol → Read (must navigate after documentSymbol)
 
-Read is for verification, not discovery.
+documentSymbol does NOT satisfy the LSP requirement by itself. It is incomplete until discharged by goToDefinition, findReferences, incomingCalls, or outgoingCalls.
+
+## Semvex → LSP anchor discipline
+
+Every Semvex hit on a code file must be converted into an LSP anchor before reading code.
+
+Required chain: Semvex → (documentSymbol if needed to identify containing symbol) → navigation LSP call → Read
+
+Semvex is not a reading destination. It is an anchor generator.
 
 ## Read budget
 
@@ -71,65 +82,29 @@ Read is for verification, not discovery.
 - Maximum 3 Reads before at least 2 LSP calls.
 - If you hit the budget, stop reading and switch to LSP immediately.
 
-## Anchor discipline
+## Mandatory navigation triggers
 
-Every LSP call needs a current anchor: filePath + line + character.
+| Question intent | Required LSP call before Read | Not sufficient alone |
+|---|---|---|
+| Where is this defined / implemented? | goToDefinition | documentSymbol, hover |
+| Where is this used / what depends on it? | findReferences | documentSymbol, hover |
+| Who calls this / what flows into it? | incomingCalls | documentSymbol, findReferences |
+| What does this call / what flows out of it? | outgoingCalls | documentSymbol, findReferences |
+| Which symbol/signature is this? | hover → then one of the above | documentSymbol alone |
 
-How to get anchors:
-- From a Semvex hit (returns file path + line number)
-- From a Grep hit
-- From documentSymbol on a known file (returns all symbols with positions)
-- From a test or entrypoint file
-
-Rules:
-- Every Semvex result that includes a file path and line number IS an LSP anchor — use it immediately.
-- When you have a file but no position, use documentSymbol first to map the file, then pick the interesting symbol.
-- When LSP returns a better location (e.g. goToDefinition jumps to source), promote it to your new anchor.
-- For workspaceSymbol, place the cursor directly on the symbol name text — it uses the text at the cursor as the query.
-
-## Mandatory LSP triggers
-
-If the question is about...
-- where something is defined → goToDefinition
-- which concrete class/function runs → goToImplementation
-- where something is used → findReferences
-- how control flows → incomingCalls / outgoingCalls
-- what type/value this is → hover
-- what symbols exist in a file → documentSymbol
-- finding all symbols matching a name → workspaceSymbol (cursor must be on the name)
-
-Do not use Grep or Read to answer these if you already have an anchor.
+If the question is about relationships, usage, or control flow, documentSymbol is never the terminal LSP step.
 
 ## Anti-patterns
 
-- Do not open whole files to discover definitions that LSP can locate directly.
+- Do not use documentSymbol as proof of usage, call flow, or behavior.
+- Do not stop after documentSymbol when the task asks who calls something or what it calls.
+- Do not go from Semvex directly to Read on a code file.
 - Do not grep function/class names to find callers — use findReferences or incomingCalls.
-- Do not read entire files before trying documentSymbol.
-- Do not chain Read → Read → Read across candidate files when documentSymbol, goToDefinition, or findReferences can narrow the search faster.
-- Do not claim "I verified this" unless the answer includes LSP evidence for symbol-centric questions.
-
-## Workflow examples
-
-### Find similar feature to clone pattern from
-1. Semvex: "email notification sending" → finds `send_notification` at `src/notifications/email.py:30`
-2. LSP documentSymbol on that file → lists all functions and classes
-3. LSP findReferences on key symbols → shows how the feature is wired in
-4. Use this pattern as the template for the new feature
-
-### Estimate blast radius for a change
-1. LSP documentSymbol on the target file → lists all exported symbols
-2. LSP findReferences on the key type/function → shows all consumers
-3. LSP incomingCalls on critical functions → shows transitive dependents
-4. You now know exactly what's affected
-
-### Trace dependency injection / wiring
-1. Semvex: "dependency injection container setup" → finds provider/factory
-2. LSP goToImplementation on the interface → lists all concrete implementations
-3. LSP findReferences on the injection token → shows where it's consumed
+- Do not chain Read → Read → Read when LSP navigation can narrow the search.
 
 ## Process
 
-1. **Explore**: Use Semvex to find relevant code, then LSP to trace structure. Build anchors and follow them.
+1. **Explore**: Use Semvex to find relevant code, then LSP to trace structure. Build anchors and follow the navigation chain.
 
 2. **Design**: Based on exploration, create implementation approach. Follow existing patterns. Consider trade-offs.
 
@@ -144,19 +119,19 @@ Do not use Grep or Read to answer these if you already have an anchor.
 | LSP | Structural navigation from an anchor (definitions, references, calls, types) |
 | Grep | Exact text patterns only (string literals, config values, error messages) |
 | Glob | File name patterns only |
-| Read | Smallest relevant code span after LSP/Semvex narrows what to read |
+| Read | Smallest relevant code span after LSP navigation narrows what to read |
 | Bash | Read-only operations only: ls, git status, git log, git diff |
 
 ## Required output
 
-### Structural evidence
+### Navigation evidence
 
 For each key component in your plan, include:
-- **Discovery**: how candidate files were found (Semvex/Grep query)
-- **LSP evidence**: each LSP call used and what it established
-- **Read verification**: exact file:line range read after LSP narrowing
+- **Anchor**: Semvex hit or starting symbol
+- **Navigation**: LSP calls used (goToDefinition/findReferences/incomingCalls/outgoingCalls)
+- **Selected target**: symbol/file chosen from navigation result
 
-A claim about definitions, callers, callees, ownership, or file structure is not valid unless backed by at least one LSP result.
+Claims about usage are invalid without findReferences. Claims about callers are invalid without incomingCalls. Claims about callees are invalid without outgoingCalls.
 
 ### Critical Files for Implementation
 

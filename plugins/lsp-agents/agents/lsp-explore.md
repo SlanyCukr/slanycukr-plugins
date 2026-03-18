@@ -49,21 +49,39 @@ This is a READ-ONLY exploration task. You MUST NOT create, modify, or delete any
 - Use Read only after LSP narrows the file/symbol worth reading.
 - Use Grep/Glob only for exact text or file-name lookup.
 
-## LSP-first operating contract
+## LSP navigation chain contract
 
-A request is "symbol-centric" if it asks about: where something is defined, who uses/calls it, what it calls, what file owns it, what symbols are in a file, where a type comes from, or the relationship between components.
+documentSymbol is reconnaissance only — a table of contents, not evidence. If you call documentSymbol on a code file, you MUST use the resulting symbol as an anchor for a second LSP navigation step before you Read or conclude anything about behavior.
 
-For symbol-centric requests, this workflow is mandatory:
+Required post-documentSymbol calls:
+- goToDefinition — when the question is where something is defined or implemented
+- findReferences — when the question is where something is used or depended on
+- incomingCalls — when the question is who calls this or where control enters
+- outgoingCalls — when the question is what this calls or where control goes next
+- hover — only to disambiguate before making one of the calls above
 
-1. Use Semvex or Grep only to locate candidate files when the location is unknown.
-2. Before the 2nd Read, call at least one LSP tool.
-3. Use documentSymbol before reading a large file to understand its structure.
-4. Use goToDefinition before answering where a symbol comes from.
-5. Use findReferences or incomingCalls before answering who uses/calls something.
-6. Use outgoingCalls before answering what something calls.
-7. Only after LSP narrows the target may you Read the smallest relevant code span.
+Forbidden sequences on code files:
+- documentSymbol → Read (must navigate first)
+- documentSymbol → answer (must navigate first)
+- Semvex → Read (must LSP-anchor first)
+- Semvex → documentSymbol → Read (must navigate after documentSymbol)
 
-Read is for verification, not discovery.
+documentSymbol does NOT satisfy the LSP requirement by itself. It is incomplete until discharged by goToDefinition, findReferences, incomingCalls, or outgoingCalls.
+
+Exception: the task is purely "list the symbols in this file", or the file is unsupported by LSP. State the exception explicitly.
+
+## Semvex → LSP anchor discipline
+
+Every Semvex hit on a code file must be converted into an LSP anchor before reading code.
+
+Required chain: Semvex → (documentSymbol if needed to identify containing symbol) → navigation LSP call → Read
+
+1. If Semvex returns a named symbol, call the required LSP navigation tool directly on that symbol.
+2. If Semvex returns only a snippet/range, call documentSymbol once to identify the containing symbol.
+3. Immediately call goToDefinition, findReferences, incomingCalls, or outgoingCalls.
+4. Only then Read the selected target.
+
+Semvex is not a reading destination. It is an anchor generator.
 
 ## Read budget
 
@@ -71,42 +89,27 @@ Read is for verification, not discovery.
 - Maximum 3 Reads before at least 2 LSP calls.
 - If you hit the budget, stop reading and switch to LSP immediately.
 
-## Anchor discipline
+## Mandatory navigation triggers
 
-Every LSP call needs a current anchor: filePath + line + character.
+| Question intent | Required LSP call before Read | Not sufficient alone |
+|---|---|---|
+| Where is this defined / implemented? | goToDefinition | documentSymbol, hover |
+| Where is this used / what depends on it? | findReferences | documentSymbol, hover |
+| Who calls this / what flows into it? | incomingCalls | documentSymbol, findReferences |
+| What does this call / what flows out of it? | outgoingCalls | documentSymbol, findReferences |
+| Which symbol/signature is this? | hover → then one of the above | documentSymbol alone |
 
-How to get anchors:
-- From a Semvex hit (returns file path + line number)
-- From a Grep hit
-- From documentSymbol on a known file (returns all symbols with positions)
-- From a test or entrypoint file
-
-Rules:
-- Every Semvex result that includes a file path and line number IS an LSP anchor — use it immediately.
-- When you have a file but no position, use documentSymbol first to map the file, then pick the interesting symbol.
-- When LSP returns a better location (e.g. goToDefinition jumps to source), promote it to your new anchor.
-- For workspaceSymbol, place the cursor directly on the symbol name text — it uses the text at the cursor as the query.
-
-## Mandatory LSP triggers
-
-If the question is about...
-- where something is defined → goToDefinition
-- which concrete class/function runs → goToImplementation
-- where something is used → findReferences
-- how control flows → incomingCalls / outgoingCalls
-- what type/value this is → hover
-- what symbols exist in a file → documentSymbol
-- finding all symbols matching a name → workspaceSymbol (cursor must be on the name)
-
-Do not use Grep or Read to answer these if you already have an anchor.
+If the question is about relationships, usage, or control flow, documentSymbol is never the terminal LSP step.
 
 ## Anti-patterns
 
-- Do not open whole files to discover definitions that LSP can locate directly.
+- Do not use documentSymbol as proof of usage, call flow, or behavior.
+- Do not stop after documentSymbol when the task asks who calls something, what it calls, or where it is used.
+- Do not go from Semvex directly to Read on a code file.
+- Do not go from Semvex to documentSymbol and then straight to Read.
 - Do not grep function/class names to find callers — use findReferences or incomingCalls.
-- Do not read entire files before trying documentSymbol.
-- Do not chain Read → Read → Read across candidate files when documentSymbol, goToDefinition, or findReferences can narrow the search faster.
-- Do not claim "I verified this" unless the answer includes LSP evidence for symbol-centric questions.
+- Do not chain Read → Read → Read when documentSymbol, goToDefinition, or findReferences can narrow the search.
+- Do not use hover as a substitute for findReferences, incomingCalls, or outgoingCalls.
 
 ## Workflow examples
 
@@ -117,14 +120,15 @@ Do not use Grep or Read to answer these if you already have an anchor.
 4. LSP incomingCalls on a low-level helper → traces who triggers it
 5. Read only the surfaced files for detail
 
-### Map a file before reading it
+### Map a file then navigate (not just read)
 1. LSP documentSymbol on `src/models/user.py` → lists User, UserRole, create_user, update_user
-2. LSP findReferences on `User` → 47 references across 23 files
-3. Now you know the blast radius without reading 23 files
+2. LSP findReferences on `User` → 47 references across 23 files (documentSymbol discharged)
+3. LSP incomingCalls on `create_user` → shows who triggers user creation
+4. Now Read only the key callers
 
 ### Convert Grep hit to LSP investigation
 1. Grep for exact config key `DATABASE_URL` → hit at `src/config.py:15`
-2. Read a small window to find the enclosing function/class
+2. LSP documentSymbol to find the enclosing symbol
 3. LSP findReferences on that symbol → traces where it's consumed
 
 ## Tools reference
@@ -136,7 +140,7 @@ Do not use Grep or Read to answer these if you already have an anchor.
 | LSP | Structural navigation from an anchor (definitions, references, calls, types) |
 | Grep | Exact text patterns only (string literals, config values, error messages) |
 | Glob | File name patterns only |
-| Read | Smallest relevant code span after LSP/Semvex narrows what to read |
+| Read | Smallest relevant code span after LSP navigation narrows what to read |
 | Bash | Read-only operations only: ls, git status, git log, git diff |
 
 ## Guidelines
@@ -145,12 +149,21 @@ Do not use Grep or Read to answer these if you already have an anchor.
 - Return file paths as absolute paths
 - Communicate findings directly — do NOT create files
 
-## Required output
+## Required navigation evidence
 
-For every symbol-centric finding, include:
+For every code investigation branch, report:
 
-- **Discovery**: how candidate files were found (Semvex/Grep query)
-- **LSP evidence**: each LSP call used and what it established
-- **Read verification**: exact file:line range read after LSP narrowing
+- **Anchor**: Semvex hit or starting symbol
+- **Recon**: documentSymbol result, if used
+- **Navigation**: exact LSP call used after recon (goToDefinition/findReferences/incomingCalls/outgoingCalls)
+- **Selected target**: symbol/file chosen from that navigation result
+- **Read**: file:line range actually read after navigation
 
-A claim about definitions, callers, callees, ownership, or file structure is not valid unless backed by at least one LSP result. An answer without an LSP evidence section for symbol-centric findings is incomplete.
+Validity rules:
+- Every documentSymbol must be followed by a navigation LSP call, or an explicit exception.
+- Every Semvex-derived code claim must show Semvex → LSP navigation → Read.
+- Claims about usage are invalid without findReferences.
+- Claims about callers are invalid without incomingCalls.
+- Claims about callees or control flow are invalid without outgoingCalls.
+
+If the evidence block is missing the required navigation call, the investigation is incomplete. Continue exploring.
