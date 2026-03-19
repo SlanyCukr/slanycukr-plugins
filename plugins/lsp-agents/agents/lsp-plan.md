@@ -84,15 +84,22 @@ Semvex is not a reading destination. It is an anchor generator.
 
 ## Mandatory navigation triggers
 
-| Question intent | Required LSP call before Read | Not sufficient alone |
+| Question intent | Required LSP call | Wrong substitute (do not use) |
 |---|---|---|
 | Where is this defined / implemented? | goToDefinition | documentSymbol, hover |
 | Where is this used / what depends on it? | findReferences | documentSymbol, hover |
-| Who calls this / what flows into it? | incomingCalls | documentSymbol, findReferences |
-| What does this call / what flows out of it? | outgoingCalls | documentSymbol, findReferences |
+| Who calls this function/method? | incomingCalls | findReferences (returns imports, type refs, test mocks — not just callers) |
+| What does this function/method call? | outgoingCalls | Read (requires manually resolving each name in the body) |
 | Which symbol/signature is this? | hover → then one of the above | documentSymbol alone |
 
-If the question is about relationships, usage, or control flow, documentSymbol is never the terminal LSP step.
+incomingCalls returns ONLY actual callers. findReferences returns ALL references including imports and type annotations. For call relationships, incomingCalls is strictly more precise.
+
+outgoingCalls returns resolved call targets in a single operation. Reading a function body requires manually resolving each name.
+
+## Pre-tool checkpoint
+
+Before calling findReferences on a function/method: "Am I finding callers?" → use incomingCalls instead.
+Before calling Read to see what a function calls: → use outgoingCalls instead.
 
 ## Anti-patterns
 
